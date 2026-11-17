@@ -1,26 +1,470 @@
+
 @import "tailwindcss";
 
+/* ==========================================
+   VITALPATCH - PROFESSIONAL DESIGN SYSTEM
+   ========================================== */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: dark;
+
+  --background: #080e19;
+  --foreground: #f8fafc;
+
+  --sidebar: #0c1523;
+  --surface: #111c2b;
+  --surface-hover: #172438;
+  --surface-soft: #0e1928;
+
+  --border: #263449;
+  --border-light: #334155;
+
+  --primary: #22d3ee;
+  --primary-hover: #06b6d4;
+
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger: #f87171;
+
+  --chart-ecg: #22d3ee;
+  --chart-spo2: #38bdf8;
+  --chart-temp: #fb923c;
+  --chart-motion: #a78bfa;
+
+  --sidebar-width: 256px;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+/* ==========================================
+   GLOBAL RESET
+   ========================================== */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  width: 100%;
+  min-height: 100%;
+  overflow-x: clip;
+  scroll-behavior: smooth;
+  scrollbar-color: #334155 #080e19;
+  scrollbar-width: thin;
 }
 
 body {
+  width: 100%;
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  overflow-x: clip;
+
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+
+  font-family:
+    Inter,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Arial,
+    sans-serif;
+
+  font-size: 14px;
+  line-height: 1.5;
+
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ==========================================
+   LAYOUT PROTECTION
+   ========================================== */
+
+/* Prevent content from expanding beyond viewport */
+
+main,
+aside,
+header,
+footer,
+section,
+article,
+nav,
+div {
+  min-width: 0;
+}
+
+/* Main dashboard must fit available space */
+
+main {
+  width: auto;
+  max-width: 100%;
+  min-height: 100vh;
+}
+
+/* Grid children must shrink correctly */
+
+.grid > *,
+.flex > * {
+  min-width: 0;
+}
+
+/* Prevent oversized media */
+
+img,
+video,
+canvas,
+svg {
+  max-width: 100%;
+}
+
+/* ==========================================
+   SCROLLBAR
+   ========================================== */
+
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--background);
+}
+
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+/* ==========================================
+   TYPOGRAPHY
+   ========================================== */
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  margin-top: 0;
+  color: var(--text-primary);
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.3;
+}
+
+h1 {
+  font-size: clamp(1.5rem, 3vw, 2rem);
+}
+
+h2 {
+  font-size: 1.4rem;
+}
+
+h3 {
+  font-size: 1rem;
+}
+
+p {
+  color: inherit;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* ==========================================
+   BUTTONS
+   ========================================== */
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+}
+
+/* ==========================================
+   FORM ELEMENTS
+   ========================================== */
+
+input,
+textarea,
+select {
+  width: 100%;
+  max-width: 100%;
+  color: var(--text-primary);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--text-muted);
+}
+
+input,
+textarea,
+select {
+  background-color: var(--surface-soft);
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+select option {
+  background: var(--surface);
+  color: white;
+}
+
+/* ==========================================
+   SELECTION
+   ========================================== */
+
+::selection {
+  background: rgba(34, 211, 238, 0.3);
+  color: white;
+}
+
+/* ==========================================
+   RECHARTS
+   ========================================== */
+
+.recharts-responsive-container {
+  min-width: 0 !important;
+  max-width: 100%;
+}
+
+.recharts-wrapper {
+  max-width: 100%;
+  font-family: Inter, Arial, sans-serif;
+}
+
+.recharts-cartesian-axis-tick-value {
+  fill: #94a3b8;
+  font-size: 11px;
+}
+
+.recharts-cartesian-grid-horizontal line,
+.recharts-cartesian-grid-vertical line {
+  stroke: #263449;
+}
+
+.recharts-tooltip-wrapper {
+  outline: none;
+}
+
+.recharts-default-tooltip {
+  background: #111c2b !important;
+  border: 1px solid #334155 !important;
+  border-radius: 10px !important;
+  padding: 10px !important;
+}
+
+.recharts-tooltip-label {
+  color: #cbd5e1 !important;
+}
+
+.recharts-tooltip-item {
+  color: #f8fafc !important;
+}
+
+/* ==========================================
+   DASHBOARD CARDS
+   ========================================== */
+
+.glass-effect {
+  background: rgba(17, 28, 43, 0.92);
+  border: 1px solid rgba(51, 65, 85, 0.6);
+  backdrop-filter: blur(14px);
+}
+
+.card-hover {
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease,
+    transform 0.2s ease;
+}
+
+.card-hover:hover {
+  border-color: rgba(34, 211, 238, 0.35);
+  transform: translateY(-2px);
+}
+
+/* ==========================================
+   STATUS INDICATORS
+   ========================================== */
+
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+}
+
+.status-connected {
+  background: var(--success);
+  box-shadow: 0 0 8px rgba(52, 211, 153, 0.5);
+}
+
+.status-disconnected {
+  background: var(--danger);
+}
+
+.status-pending {
+  background: var(--warning);
+}
+
+/* ==========================================
+   ECG ANIMATION
+   ========================================== */
+
+@keyframes pulse-glow {
+  0%,
+  100% {
+    opacity: 0.65;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+.ecg-glow {
+  animation: pulse-glow 1.5s ease-in-out infinite;
+}
+
+/* ==========================================
+   RESPONSIVE SIDEBAR
+   ========================================== */
+
+@media (min-width: 1024px) {
+  aside {
+    width: var(--sidebar-width);
+  }
+
+  main.lg\:ml-64 {
+    margin-left: var(--sidebar-width);
+  }
+}
+
+/* ==========================================
+   TABLET
+   ========================================== */
+
+@media (max-width: 1023px) {
+  main {
+    margin-left: 0;
+  }
+}
+
+/* ==========================================
+   MOBILE
+   ========================================== */
+
+@media (max-width: 768px) {
+  body {
+    font-size: 13px;
+  }
+
+  .recharts-cartesian-axis-tick-value {
+    font-size: 10px;
+  }
+
+  .recharts-responsive-container {
+    min-height: 180px;
+  }
+}
+
+/* ==========================================
+   SMALL MOBILE
+   ========================================== */
+
+@media (max-width: 480px) {
+  body {
+    font-size: 12px;
+  }
+
+  h1 {
+    font-size: 1.5rem;
+  }
+
+  h2 {
+    font-size: 1.2rem;
+  }
+}
+
+/* ==========================================
+   PRINT REPORTS
+   ========================================== */
+
+@media print {
+  body {
+    background: white !important;
+    color: black !important;
+    overflow: visible !important;
+  }
+
+  aside,
+  header,
+  footer,
+  button {
+    display: none !important;
+  }
+
+  main {
+    margin: 0 !important;
+    width: 100% !important;
+  }
+
+  * {
+    color: black !important;
+    box-shadow: none !important;
+  }
+}
+
+/* ==========================================
+   ACCESSIBILITY
+   ========================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
