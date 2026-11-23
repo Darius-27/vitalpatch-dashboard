@@ -32,7 +32,15 @@ import {
   AlertCircle,
   Radio,
   Stethoscope,
+  LogIn,
+  LogOut,
+  KeyRound,
+  CheckCircle2,
+  Loader2,
 } from "lucide-react";
+
+import { supabase } from "@/lib/supabase";
+import type { User } from "@supabase/supabase-js";
 
 import {
   ResponsiveContainer,
@@ -49,6 +57,8 @@ import {
 // ==========================================
 
 type Patient = {
+  db_id?: string;
+  user_id?: string;
   name: string;
   id: string;
   age: string;
@@ -184,30 +194,230 @@ export default function Dashboard() {
   const [profileSaved, setProfileSaved] = useState(false);
   const [editingPatient, setEditingPatient] = useState(true);
 
+  // Supabase Auth & Synchronization State
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [savingPatient, setSavingPatient] = useState(false);
+  const [fetchingPatient, setFetchingPatient] = useState(false);
+  const [statusMessage, setStatusMessage] = useState<{
+    type: "success" | "error" | "info";
+    text: string;
+  } | null>(null);
+
+  // Clinician Login Modal State
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authActionLoading, setAuthActionLoading] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authSuccess, setAuthSuccess] = useState<string | null>(null);
+
   const [search, setSearch] = useState("");
   const [mobileMenu, setMobileMenu] = useState(false);
 
   const [deviceConnected] = useState(false);
 
-  // Load patient profile
-  useEffect(() => {
+  // Helper to parse numeric strings
+  const parseNum = (val: string): number | null => {
+    if (!val) return null;
+    const clean = val.replace(/[^0-9.]/g, "");
+    const parsed = parseFloat(clean);
+    return isNaN(parsed) ? null : parsed;
+  };
+
+  // Convert Supabase DB row to Patient UI model
+  const mapDbToPatient = (row: any): Patient => ({
+    db_id: row.id,
+    user_id: row.user_id,
+    name: row.full_name || "",
+    id: row.patient_code || "",
+    age: row.age != null ? String(row.age) : "",
+    gender: row.gender || "",
+    blood: row.blood_group || "",
+    height: row.height_cm != null ? `${row.height_cm} cm` : "",
+    weight: row.weight_kg != null ? `${row.weight_kg} kg` : "",
+    phone: row.phone || "",
+    email: row.email || "",
+    history: row.medical_history || "",
+    medication: row.medications || "",
+    allergies: row.allergies || "",
+    emergencyContact: [row.emergency_contact_name, row.emergency_contact_phone]
+      .filter(Boolean)
+      .join(" - "),
+  });
+
+  // Fetch patient profile from Supabase
+  async function fetchPatientProfile(userId: string) {
+    setFetchingPatient(true);
     try {
-      const saved = localStorage.getItem("vitalpatch_patient");
+      const { data, error } = await supabase
+        .from("patients")
+        .select("*")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
-      if (saved) {
-        const parsed = JSON.parse(saved);
-
-        setPatient({ ...emptyPatient, ...parsed });
+      if (error) {
+        console.error("Supabase fetch error:", error.message);
+        setStatusMessage({
+          type: "error",
+          text: `Supabase load error: ${error.message}`,
+        });
+      } else if (data) {
+        const loadedPatient = mapDbToPatient(data);
+        setPatient(loadedPatient);
         setProfileSaved(true);
         setEditingPatient(false);
+        // Sync local cache
+        localStorage.setItem("vitalpatch_patient", JSON.stringify(loadedPatient));
+      } else {
+        // No record yet for this clinician in Supabase
+        const cached = localStorage.getItem("vitalpatch_patient");
+        if (cached) {
+          try {
+            setPatient({ ...emptyPatient, ...JSON.parse(cached) });
+          } catch {
+            setPatient(emptyPatient);
+          }
+        }
+        setProfileSaved(false);
+        setEditingPatient(true);
       }
-    } catch {
-      console.error("Unable to load patient profile");
+    } catch (err: any) {
+      console.error("Failed to load patient from Supabase:", err);
+    } finally {
+      setFetchingPatient(false);
     }
+  }
+
+  // Subscribe to Auth state changes and initial session
+  useEffect(() => {
+    async function initAuth() {
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        if (session?.user) {
+          setCurrentUser(session.user);
+          await fetchPatientProfile(session.user.id);
+        } else {
+          setCurrentUser(null);
+          // Fallback to local cache if no user logged in
+          const cached = localStorage.getItem("vitalpatch_patient");
+          if (cached) {
+            try {
+              setPatient({ ...emptyPatient, ...JSON.parse(cached) });
+              setProfileSaved(true);
+              setEditingPatient(false);
+            } catch {
+              // ignore
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Auth init error:", err);
+      } finally {
+        setAuthLoading(false);
+      }
+    }
+
+    initAuth();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (session?.user) {
+        setCurrentUser(session.user);
+        await fetchPatientProfile(session.user.id);
+      } else {
+        setCurrentUser(null);
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
-  // Save patient profile
-  function savePatient(e: React.FormEvent<HTMLFormElement>) {
+  // Handle Clinician Sign-In / Sign-Up
+  async function handleAuthSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setAuthActionLoading(true);
+    setAuthError(null);
+    setAuthSuccess(null);
+
+    try {
+      if (authMode === "signin") {
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: authEmail.trim(),
+          password: authPassword,
+        });
+
+        if (error) {
+          setAuthError(error.message);
+        } else if (data.user) {
+          setCurrentUser(data.user);
+          setShowAuthModal(false);
+          setAuthEmail("");
+          setAuthPassword("");
+          setStatusMessage({
+            type: "success",
+            text: `Signed in as Clinician: ${data.user.email}`,
+          });
+          await fetchPatientProfile(data.user.id);
+        }
+      } else {
+        const { data, error } = await supabase.auth.signUp({
+          email: authEmail.trim(),
+          password: authPassword,
+        });
+
+        if (error) {
+          setAuthError(error.message);
+        } else if (data.user) {
+          if (data.session) {
+            setCurrentUser(data.user);
+            setShowAuthModal(false);
+            setAuthEmail("");
+            setAuthPassword("");
+            setStatusMessage({
+              type: "success",
+              text: `Clinician account registered: ${data.user.email}`,
+            });
+            await fetchPatientProfile(data.user.id);
+          } else {
+            setAuthSuccess(
+              "Account registered! If confirmation is enabled, please verify your email before logging in."
+            );
+          }
+        }
+      }
+    } catch (err: any) {
+      setAuthError(err.message || "Authentication failed");
+    } finally {
+      setAuthActionLoading(false);
+    }
+  }
+
+  // Handle Clinician Sign-Out
+  async function handleSignOut() {
+    try {
+      await supabase.auth.signOut();
+      setCurrentUser(null);
+      setStatusMessage({
+        type: "info",
+        text: "Clinician signed out. Please sign in to sync with Supabase.",
+      });
+    } catch (err: any) {
+      console.error("Sign out error:", err);
+    }
+  }
+
+  // Save patient profile to Supabase with RLS
+  async function savePatient(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
     if (!patient.name.trim() || !patient.id.trim()) {
@@ -215,18 +425,89 @@ export default function Dashboard() {
       return;
     }
 
-    try {
-      localStorage.setItem(
-        "vitalpatch_patient",
-        JSON.stringify(patient)
-      );
+    if (!currentUser) {
+      setShowAuthModal(true);
+      setStatusMessage({
+        type: "info",
+        text: "Please sign in with a Clinician account to save patient data to Supabase.",
+      });
+      return;
+    }
 
+    setSavingPatient(true);
+    setStatusMessage(null);
+
+    try {
+      // Split emergency contact into name and phone if present
+      let emergencyName = patient.emergencyContact || "";
+      let emergencyPhone = "";
+      if (emergencyName.includes("-")) {
+        const parts = emergencyName.split("-");
+        emergencyName = parts[0].trim();
+        emergencyPhone = parts.slice(1).join("-").trim();
+      }
+
+      const payload: Record<string, any> = {
+        user_id: currentUser.id,
+        patient_code: patient.id.trim(),
+        full_name: patient.name.trim(),
+        age: patient.age ? parseInt(patient.age, 10) || null : null,
+        gender: patient.gender || null,
+        blood_group: patient.blood || null,
+        height_cm: parseNum(patient.height),
+        weight_kg: parseNum(patient.weight),
+        phone: patient.phone.trim() || null,
+        email: patient.email.trim() || null,
+        medical_history: patient.history.trim() || null,
+        medications: patient.medication.trim() || null,
+        allergies: patient.allergies.trim() || null,
+        emergency_contact_name: emergencyName || null,
+        emergency_contact_phone: emergencyPhone || null,
+        updated_at: new Date().toISOString(),
+      };
+
+      if (patient.db_id) {
+        payload.id = patient.db_id;
+      }
+
+      const { data, error } = await supabase
+        .from("patients")
+        .upsert(payload, { onConflict: "id" })
+        .select()
+        .single();
+
+      if (error) {
+        console.error("Supabase upsert error:", error);
+        setStatusMessage({
+          type: "error",
+          text: `Supabase save failed: ${error.message}`,
+        });
+        alert(`Supabase save failed: ${error.message}`);
+        return;
+      }
+
+      const updated = mapDbToPatient(data);
+      setPatient(updated);
       setProfileSaved(true);
       setEditingPatient(false);
 
-      alert("Patient profile saved successfully!");
-    } catch {
+      // Keep localStorage as offline backup cache
+      localStorage.setItem("vitalpatch_patient", JSON.stringify(updated));
+
+      setStatusMessage({
+        type: "success",
+        text: "Patient profile saved to Supabase database successfully!",
+      });
+      alert("Patient profile saved to Supabase successfully!");
+    } catch (err: any) {
+      console.error("Save error:", err);
+      setStatusMessage({
+        type: "error",
+        text: `Error saving patient: ${err.message || err}`,
+      });
       alert("Unable to save patient information.");
+    } finally {
+      setSavingPatient(false);
     }
   }
 
@@ -237,16 +518,36 @@ export default function Dashboard() {
     }));
   }
 
-  function deletePatient() {
+  async function deletePatient() {
     if (!confirm("Are you sure you want to delete this patient profile?")) {
       return;
     }
 
-    localStorage.removeItem("vitalpatch_patient");
+    if (patient.db_id && currentUser) {
+      try {
+        const { error } = await supabase
+          .from("patients")
+          .delete()
+          .eq("id", patient.db_id)
+          .eq("user_id", currentUser.id);
 
+        if (error) {
+          alert(`Supabase deletion error: ${error.message}`);
+          return;
+        }
+      } catch (err: any) {
+        console.error("Deletion error:", err);
+      }
+    }
+
+    localStorage.removeItem("vitalpatch_patient");
     setPatient(emptyPatient);
     setProfileSaved(false);
     setEditingPatient(true);
+    setStatusMessage({
+      type: "info",
+      text: "Patient profile deleted.",
+    });
   }
 
   const navigation: {
@@ -351,6 +652,90 @@ export default function Dashboard() {
           title="Patient Management"
           description="Register and manage patient information."
         />
+
+        {/* CLINICIAN AUTH & SYNC STATUS BANNER */}
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-800 bg-[#0e1726] p-4">
+          <div className="flex items-center gap-3">
+            <div
+              className={`rounded-xl p-2.5 ${
+                currentUser
+                  ? "bg-emerald-500/10 text-emerald-400"
+                  : "bg-amber-500/10 text-amber-400"
+              }`}
+            >
+              <Stethoscope size={20} />
+            </div>
+            <div>
+              <p className="text-xs font-semibold text-slate-400">
+                Clinician Session (Supabase RLS)
+              </p>
+              <p className="text-sm font-medium text-white">
+                {currentUser ? (
+                  <span>
+                    Authenticated:{" "}
+                    <span className="text-cyan-400">{currentUser.email}</span>
+                  </span>
+                ) : (
+                  <span className="text-amber-300">
+                    Not authenticated — sign in to sync with Supabase
+                  </span>
+                )}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            {currentUser ? (
+              <button
+                type="button"
+                onClick={handleSignOut}
+                className="flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800/80 px-3.5 py-2 text-xs font-medium text-slate-300 hover:bg-slate-700"
+              >
+                <LogOut size={14} />
+                Sign Out
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthMode("signin");
+                  setShowAuthModal(true);
+                }}
+                className="flex items-center gap-1.5 rounded-xl bg-cyan-500 px-4 py-2 text-xs font-bold text-slate-950 hover:bg-cyan-400"
+              >
+                <LogIn size={14} />
+                Clinician Sign In
+              </button>
+            )}
+          </div>
+        </div>
+
+        {statusMessage && (
+          <div
+            className={`mb-6 flex items-center justify-between rounded-xl border p-4 text-xs ${
+              statusMessage.type === "success"
+                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                : statusMessage.type === "error"
+                ? "border-red-500/30 bg-red-500/10 text-red-300"
+                : "border-cyan-500/30 bg-cyan-500/10 text-cyan-300"
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              {statusMessage.type === "success" ? (
+                <CheckCircle2 size={16} />
+              ) : (
+                <AlertCircle size={16} />
+              )}
+              <span>{statusMessage.text}</span>
+            </div>
+            <button
+              onClick={() => setStatusMessage(null)}
+              className="text-slate-400 hover:text-white"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
 
         <Panel>
           <div className="mb-7 flex flex-wrap items-center justify-between gap-4">
@@ -517,10 +902,20 @@ export default function Dashboard() {
               <div className="mt-8 flex flex-wrap gap-3">
                 <button
                   type="submit"
-                  className="flex items-center gap-2 rounded-xl bg-cyan-500 px-6 py-3 text-sm font-bold text-slate-950 hover:bg-cyan-400"
+                  disabled={savingPatient}
+                  className="flex items-center gap-2 rounded-xl bg-cyan-500 px-6 py-3 text-sm font-bold text-slate-950 hover:bg-cyan-400 disabled:opacity-50"
                 >
-                  <Save size={17} />
-                  Save Patient Profile
+                  {savingPatient ? (
+                    <>
+                      <Loader2 size={17} className="animate-spin" />
+                      Saving to Supabase...
+                    </>
+                  ) : (
+                    <>
+                      <Save size={17} />
+                      Save to Supabase
+                    </>
+                  )}
                 </button>
 
                 {profileSaved && (
@@ -1218,6 +1613,32 @@ export default function Dashboard() {
               </span>
             </div>
 
+            {currentUser ? (
+              <div className="flex items-center gap-2">
+                <span className="hidden text-xs text-slate-300 md:inline">
+                  Dr. {currentUser.email?.split("@")[0]}
+                </span>
+                <button
+                  onClick={handleSignOut}
+                  title="Sign out of Clinician session"
+                  className="rounded-xl border border-slate-800 p-2 text-slate-400 hover:bg-slate-800 hover:text-white"
+                >
+                  <LogOut size={17} />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => {
+                  setAuthMode("signin");
+                  setShowAuthModal(true);
+                }}
+                className="flex items-center gap-1.5 rounded-xl bg-cyan-500 px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-cyan-400"
+              >
+                <LogIn size={15} />
+                <span className="hidden sm:inline">Clinician Sign In</span>
+              </button>
+            )}
+
             <button
               onClick={() => setActiveTab("Device Settings")}
               className="rounded-xl border border-slate-800 p-2.5 text-slate-400 hover:bg-slate-800"
@@ -1242,6 +1663,140 @@ export default function Dashboard() {
           </footer>
         </div>
       </main>
+
+      {/* CLINICIAN AUTHENTICATION MODAL */}
+      {showAuthModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-[#0e1726] p-6 shadow-2xl">
+            <div className="mb-5 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="rounded-xl bg-cyan-500/10 p-2 text-cyan-400">
+                  <Stethoscope size={20} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-white">
+                    {authMode === "signin"
+                      ? "Clinician Sign In"
+                      : "Register Clinician"}
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Supabase Row Level Security Session
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setShowAuthModal(false);
+                  setAuthError(null);
+                  setAuthSuccess(null);
+                }}
+                className="text-slate-400 hover:text-white"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {authError && (
+              <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-300">
+                {authError}
+              </div>
+            )}
+
+            {authSuccess && (
+              <div className="mb-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-300">
+                {authSuccess}
+              </div>
+            )}
+
+            <form onSubmit={handleAuthSubmit} className="space-y-4">
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-slate-400">
+                  Email Address
+                </label>
+                <input
+                  type="email"
+                  required
+                  placeholder="doctor@hospital.org"
+                  value={authEmail}
+                  onChange={(e) => setAuthEmail(e.target.value)}
+                  className="w-full rounded-xl border border-slate-700 bg-[#080e19] px-4 py-2.5 text-sm text-white placeholder:text-slate-600 focus:border-cyan-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-slate-400">
+                  Password
+                </label>
+                <input
+                  type="password"
+                  required
+                  placeholder="Enter password"
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  className="w-full rounded-xl border border-slate-700 bg-[#080e19] px-4 py-2.5 text-sm text-white placeholder:text-slate-600 focus:border-cyan-500 focus:outline-none"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={authActionLoading}
+                className="flex w-full items-center justify-center gap-2 rounded-xl bg-cyan-500 py-3 text-sm font-bold text-slate-950 transition hover:bg-cyan-400 disabled:opacity-50"
+              >
+                {authActionLoading ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" />
+                    Authenticating...
+                  </>
+                ) : authMode === "signin" ? (
+                  <>
+                    <LogIn size={16} />
+                    Sign In
+                  </>
+                ) : (
+                  <>
+                    <KeyRound size={16} />
+                    Create Clinician Account
+                  </>
+                )}
+              </button>
+            </form>
+
+            <div className="mt-5 text-center text-xs text-slate-400">
+              {authMode === "signin" ? (
+                <p>
+                  New clinician?{" "}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthMode("signup");
+                      setAuthError(null);
+                      setAuthSuccess(null);
+                    }}
+                    className="font-semibold text-cyan-400 hover:underline"
+                  >
+                    Register here
+                  </button>
+                </p>
+              ) : (
+                <p>
+                  Already have an account?{" "}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthMode("signin");
+                      setAuthError(null);
+                      setAuthSuccess(null);
+                    }}
+                    className="font-semibold text-cyan-400 hover:underline"
+                  >
+                    Sign in
+                  </button>
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
